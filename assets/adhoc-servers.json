@@ -211,6 +211,14 @@
 			"data_mode": "AemuPostoffice",
 			"status_xml": "",
 			"icon": "https://raw.githubusercontent.com/MainPiyushHoon/Alpha-Community-Webpage/refs/heads/main/src/images/ALPHA.webp"
+		},
+		{
+			"name": "andexplaystream",
+			"host": "psp.andexplaystream.online",
+			"location": "Jakarta, Indonesia",
+			"data_mode": "AemuPostoffice",
+			"web": "",
+			"description": "For players looking to play any games"
 		}
 	]
 }
