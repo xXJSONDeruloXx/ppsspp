@@ -301,8 +301,9 @@ Two debugger facilities are intended for automated counterfactual experiments:
   WebSocket reconnects but not PPSSPP process exit, and the current boot path must match the path
   captured with the state. Storage is capped at 32 states / 1 GiB per process. `state.export`
   and `state.import` are the escape hatch for copying one checkpoint to another PPSSPP worker;
-  keep the large base64 blob inside the orchestration layer rather than passing it through model
-  context.
+  import requires the `gamePath` returned by export and rejects it if that path does not match the
+  worker's currently booted game. Keep the large base64 blob inside the orchestration layer rather
+  than passing it through model context.
 - `frame.advance` resumes from stepping for exactly `count` emulated frame boundaries and then
   stops again with a `cpu.stepping` event whose reason is `ui.frameAdvance`. A breakpoint,
   exception, or other stop encountered first cancels the remaining advance. `frame.current`

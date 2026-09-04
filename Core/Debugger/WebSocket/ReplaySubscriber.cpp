@@ -410,6 +410,10 @@ void WebSocketStateImport(DebuggerRequest &req) {
 	if (!req.ParamString("base64", &encoded))
 		return;
 
+	std::string sourceGamePath;
+	if (!req.ParamString("gamePath", &sourceGamePath))
+		return;
+
 	std::string requestedId;
 	if (!req.ParamString("id", &requestedId, DebuggerParamType::OPTIONAL))
 		return;
@@ -440,6 +444,8 @@ void WebSocketStateImport(DebuggerRequest &req) {
 			return req.Fail("Game not running");
 		if (coreState != CORE_STEPPING_CPU)
 			return req.Fail("CPU must be in CPU stepping mode (cpu.stepping first)");
+		if (PSP_CoreParameter().fileToStart.ToString() != sourceGamePath)
+			return req.Fail("Imported snapshot belongs to a different game path");
 
 		std::string id = requestedId.empty() ? NextDebuggerSnapshotId() : requestedId;
 		auto existing = g_debuggerSnapshots.find(id);
@@ -455,7 +461,7 @@ void WebSocketStateImport(DebuggerRequest &req) {
 
 		DebuggerSnapshot snapshot;
 		snapshot.data = std::move(data);
-		snapshot.gamePath = PSP_CoreParameter().fileToStart.ToString();
+		snapshot.gamePath = sourceGamePath;
 		snapshot.emulatedUs = hasSourceUs ? (u64)sourceUs : 0;
 		snapshot.vcount = hasSourceVcount ? (int)sourceVcount : 0;
 
