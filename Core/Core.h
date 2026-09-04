@@ -128,6 +128,10 @@ BreakReason Core_BreakReason();
 // stepSize is always in instructions (4 bytes each), never bytes - see Core_PerformCPUStep in Core.cpp.
 bool Core_RequestCPUStep(CPUStepType stepType);
 
+// Advance an exact number of emulated frames while stopped in CPU stepping mode.
+// Returns false if another step/run is already pending or frames is zero.
+bool Core_RequestFrameAdvance(u32 frames);
+
 bool Core_NextFrame();
 void Core_SwitchToGe();  // Switches from CPU emulation to GE display list execution.
 

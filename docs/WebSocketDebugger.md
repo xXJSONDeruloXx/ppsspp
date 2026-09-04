@@ -272,7 +272,7 @@ file - this is just an index.
 |---|---|---|
 | Game/version | `game.reset`, `game.status`, `game.speed.get/set` (emulation speed - unlimited fast-forward, or a percentage of 60 FPS; see below), `version` | `GameSubscriber.cpp` |
 | CPU core | `cpu.stepping`, `cpu.resume`, `cpu.status` (reports `ticks` plus `us`, emulated microseconds, and `clockHz` - use `us` to line up with wall-clock timings, since games change the clock frequency and the ticks-per-second ratio isn't fixed), `cpu.getAllRegs`, `cpu.getReg`, `cpu.setReg`, `cpu.evaluate` | `CPUCoreSubscriber.cpp` |
-| Stepping | `cpu.stepInto`, `cpu.stepOver`, `cpu.stepOut`, `cpu.runUntil`, `cpu.runUntilTime` (run until a point in emulated time - `us` absolute or `relativeUs` from now - and break there; this is how to get a scripted repro reproducibly "N seconds into the game" instead of polling `cpu.status` in a loop), `cpu.nextHLE` | `SteppingSubscriber.cpp` |
+| Stepping | `cpu.stepInto`, `cpu.stepOver`, `cpu.stepOut`, `cpu.runUntil`, `cpu.runUntilTime` (run until a point in emulated time - `us` absolute or `relativeUs` from now), `frame.advance` (advance an exact number of emulated frames), `frame.current` (read VBlank/VCount/flip/time counters), `cpu.nextHLE` | `SteppingSubscriber.cpp` |
 | Breakpoints | `cpu.breakpoint.add/update/remove/list`, `memory.breakpoint.add/update/remove/list`, `cpu.regBreakpoint.add/update/remove/list` (break when a register is written to, by any instruction anywhere - currently GPRs only; interpreter-only, no effect under a JIT backend) | `BreakpointSubscriber.cpp` |
 | Memory read/write | `memory.read_u8/u16/u32`, `memory.read`, `memory.readString`, `memory.write_u8/u16/u32`, `memory.write`. The numeric ones report the result as both `value` and `uintValue` - the latter is what `cpu.getReg`/`cpu.getAllRegs` call it, so a client can read either without caring which event answered | `MemorySubscriber.cpp` |
 | Memory search | `memory.search` - scan a range for a `u8`/`u16`/`u32`/`float` value or a `bytes` pattern (with an optional wildcard mask), for narrowing down where an unknown value lives (Cheat Engine style) | `MemorySubscriber.cpp` |
@@ -287,8 +287,27 @@ file - this is just an index.
 | GPU buffers | `gpu.buffer.screenshot`, `gpu.buffer.renderColor/renderDepth/renderStencil`, `gpu.buffer.texture`, `gpu.buffer.clut` | `GPUBufferSubscriber.cpp` |
 | Input injection | `input.buttons.send`, `input.buttons.press`, `input.analog.send` | `InputSubscriber.cpp` |
 | Replay | `replay.begin/abort/flush/execute/status`, `replay.time.get/set` | `ReplaySubscriber.cpp` |
+| In-memory checkpoints | `state.capture/restore/list/drop/clear` - process-local savestate checkpoints for cheap deterministic branching; capture/restore require CPU stepping | `ReplaySubscriber.cpp` |
 | Client config | `broadcast.config.get/set`, `client.config.get/set` | `ClientConfigSubscriber.cpp` |
 | Log channels | `log.channels.list`, `log.channel.set` - query/change a log channel's level (string: `notice`/`error`/`warning`/`info`/`debug`/`verbose`) and/or enabled state; the `log` event itself (the passive message stream, unaffected by this) keeps its existing numeric `level`, see `LogBroadcaster.cpp` | `LogConfigSubscriber.cpp` |
+
+## Deterministic experiment control
+
+Two debugger facilities are intended for automated counterfactual experiments:
+
+- `state.capture` serializes the current stopped emulator state into process memory and returns a
+  small id. `state.restore` restores that id; `state.list`, `state.drop`, and `state.clear`
+  manage the process-local store. Capture/restore require the CPU to be stepping, snapshots survive
+  WebSocket reconnects but not PPSSPP process exit, and the current boot path must match the path
+  captured with the state. Storage is capped at 32 states / 1 GiB per process.
+- `frame.advance` resumes from stepping for exactly `count` emulated frame boundaries and then
+  stops again with a `cpu.stepping` event whose reason is `ui.frameAdvance`. A breakpoint,
+  exception, or other stop encountered first cancels the remaining advance. `frame.current`
+  reports the process-level VBlank counter, serialized PSP VCount, flip count, and emulated time.
+
+The process-level VBlank statistic is intentionally not serialized by PPSSPP. Use the restored
+machine state plus `frame.advance` for deterministic branching rather than treating the VBlank
+counter itself as checkpoint-relative.
 
 ## Enabling it
 

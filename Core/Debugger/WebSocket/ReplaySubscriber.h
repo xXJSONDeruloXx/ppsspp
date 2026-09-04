@@ -28,3 +28,9 @@ void WebSocketReplayExecute(DebuggerRequest &req);
 void WebSocketReplayStatus(DebuggerRequest &req);
 void WebSocketReplayTimeGet(DebuggerRequest &req);
 void WebSocketReplayTimeSet(DebuggerRequest &req);
+
+void WebSocketStateCapture(DebuggerRequest &req);
+void WebSocketStateRestore(DebuggerRequest &req);
+void WebSocketStateList(DebuggerRequest &req);
+void WebSocketStateDrop(DebuggerRequest &req);
+void WebSocketStateClear(DebuggerRequest &req);

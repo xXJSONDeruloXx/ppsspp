@@ -24,6 +24,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/sceKernelThread.h"
+#include "Core/HW/Display.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
 #include "Core/MIPS/MIPSStackWalk.h"
 
@@ -42,6 +43,8 @@ struct WebSocketSteppingState : public DebuggerSubscriber {
 	void Out(DebuggerRequest &req);
 	void RunUntil(DebuggerRequest &req);
 	void RunUntilTime(DebuggerRequest &req);
+	void FrameAdvance(DebuggerRequest &req);
+	void FrameCurrent(DebuggerRequest &req);
 	void HLE(DebuggerRequest &req);
 
 protected:
@@ -57,6 +60,8 @@ DebuggerSubscriber *WebSocketSteppingInit(DebuggerEventHandlerMap &map) {
 	map["cpu.stepOut"]  = [p](DebuggerRequest &req) { p->Out(req); };
 	map["cpu.runUntil"] = [p](DebuggerRequest &req) { p->RunUntil(req); };
 	map["cpu.runUntilTime"] = [p](DebuggerRequest &req) { p->RunUntilTime(req); };
+	map["frame.advance"] = [p](DebuggerRequest &req) { p->FrameAdvance(req); };
+	map["frame.current"] = [p](DebuggerRequest &req) { p->FrameCurrent(req); };
 	map["cpu.nextHLE"]  = [p](DebuggerRequest &req) { p->HLE(req); };
 	return p;
 }
@@ -333,6 +338,72 @@ void WebSocketSteppingState::RunUntilTime(DebuggerRequest &req) {
 		JsonWriter &json = req.Respond();
 		json.writeFloat("targetUs", (double)targetUs);
 		json.writeFloat("us", (double)nowUs);
+	});
+}
+
+// Advance an exact number of emulated frames (frame.advance)
+//
+// The CPU must already be stopped in CPU stepping mode. This uses the same end-of-emulated-frame
+// boundary as PPSSPP's internal frame step rather than host timing or the diagnostic VBlank
+// counter, so restoring a savestate and repeating the same request reaches the same machine state.
+//
+// Parameters:
+//  - count: optional integer number of frames to advance, defaults to 1 (1..1000000).
+//
+// Response (same event name):
+//  - count: accepted frame count.
+//  - startVblank: process-level diagnostic VBlank counter at the start (not restored by savestates).
+//  - startVcount: emulated PSP VCount at the start (is restored by savestates).
+//  - startUs: emulated microseconds at the start.
+//
+// A cpu.stepping event with reason "ui.frameAdvance" is sent when the requested frame count
+// completes. Any breakpoint/exception/other stop encountered first cancels the remaining advance.
+void WebSocketSteppingState::FrameAdvance(DebuggerRequest &req) {
+	uint32_t count = 1;
+	if (!req.ParamU32("count", &count, false, DebuggerParamType::OPTIONAL))
+		return;
+	if (count == 0 || count > 1000000)
+		return req.Fail("Parameter 'count' must be between 1 and 1000000");
+
+	Core_RunOnCPUThread([&] {
+		if (!currentDebugMIPS->isAlive())
+			return req.Fail("CPU not started");
+		if (!Core_IsStepping() || coreState == CORE_POWERDOWN)
+			return req.Fail("CPU currently running (cpu.stepping first)");
+
+		const int startVblank = __DisplayGetNumVblanks();
+		const int startVcount = __DisplayGetVCount();
+		const u64 startUs = CoreTiming::GetGlobalTimeUs();
+		if (!Core_RequestFrameAdvance(count))
+			return req.Fail("Could not advance frames: another step or run request is already pending");
+
+		JsonWriter &json = req.Respond();
+		json.writeUint("count", count);
+		json.writeInt("startVblank", startVblank);
+		json.writeInt("startVcount", startVcount);
+		json.writeFloat("startUs", (double)startUs);
+	});
+}
+
+// Read emulated frame counters without changing execution (frame.current)
+//
+// No parameters.
+//
+// Response (same event name):
+//  - vblank: process-level VBlank count. This is diagnostic and intentionally not in savestates.
+//  - vcount: emulated PSP VCount. This is serialized/restored with the machine state.
+//  - flip: number of actual presented flips.
+//  - us: current emulated microseconds.
+void WebSocketSteppingState::FrameCurrent(DebuggerRequest &req) {
+	Core_RunOnCPUThread([&] {
+		if (!currentDebugMIPS->isAlive())
+			return req.Fail("CPU not started");
+
+		JsonWriter &json = req.Respond();
+		json.writeInt("vblank", __DisplayGetNumVblanks());
+		json.writeInt("vcount", __DisplayGetVCount());
+		json.writeInt("flip", __DisplayGetFlipCount());
+		json.writeFloat("us", (double)CoreTiming::GetGlobalTimeUs());
 	});
 }
 

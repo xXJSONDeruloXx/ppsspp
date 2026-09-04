@@ -234,7 +234,10 @@ CoreState preGeCoreState = CORE_POWERDOWN;
 volatile bool coreStatePending = false;
 
 static bool powerSaving = false;
-static bool g_breakAfterFrame = false;
+// Multi-frame counterpart to the legacy single-frame debugger step. Atomic because Core_Break()
+// is free-threaded and cancels it, while normal setup/countdown happens on the CPU thread.
+static std::atomic<u32> g_breakAfterFrames{ 0 };
+static std::atomic<BreakReason> g_frameAdvanceReason{ BreakReason::None };
 static BreakReason g_breakReason = BreakReason::None;
 // Detail about the breakpoint that caused the current break, if it was one. Guarded by g_stepMutex
 // alongside g_cpuStepCommand, which is what it belongs to.
@@ -331,6 +334,8 @@ void Core_NotifyLifecycle(CoreLifecycle stage) {
 		std::lock_guard<std::mutex> guard(g_stepMutex);
 		g_cpuStepQueue.clear();
 		g_cpuStepCommand.clear();
+		g_breakAfterFrames.store(0, std::memory_order_relaxed);
+		g_frameAdvanceReason.store(BreakReason::None, std::memory_order_relaxed);
 	}
 
 	for (auto func : lifecycleFuncs) {
@@ -427,16 +432,24 @@ void Core_RunLoopUntil(u64 globalticks) {
 		case CORE_RUNNING_CPU:
 			mipsr4k.RunLoopUntil(globalticks);
 			if (coreState == CORE_RUNNING_CPU) {
-				// If we are still running, we must have reached the end of a frame.
-				coreState = CORE_NEXTFRAME;
+				// If we are still running, we must have reached the end of an emulated frame.
+				// For debugger frame advances, count those exact boundaries and enter the normal
+				// Core_Break path on the requested one so stepping reason/counters/broadcasts are
+				// identical to any other debugger stop.
+				u32 framesRemaining = g_breakAfterFrames.load(std::memory_order_relaxed);
+				if (framesRemaining == 0) {
+					coreState = CORE_NEXTFRAME;
+				} else if (framesRemaining == 1) {
+					g_breakAfterFrames.store(0, std::memory_order_relaxed);
+					const BreakReason reason = g_frameAdvanceReason.exchange(BreakReason::None, std::memory_order_relaxed);
+					Core_Break(reason, 0);
+				} else {
+					g_breakAfterFrames.store(framesRemaining - 1, std::memory_order_relaxed);
+					coreState = CORE_NEXTFRAME;
+				}
 			} else if (coreState == CORE_REENTER_DISPATCH) {
 				// Back to running right away.
 				coreState = CORE_RUNNING_CPU;
-			}
-			if (g_breakAfterFrame && coreState == CORE_NEXTFRAME) {
-				g_breakAfterFrame = false;
-				g_breakReason = BreakReason::AfterFrame;
-				coreState = CORE_STEPPING_CPU;
 			}
 			break;  // Will loop around to go to RUNNING_GE or NEXTFRAME, which will exit.
 		case CORE_RUNNING_GE:
@@ -481,6 +494,25 @@ bool Core_RequestCPUStep(CPUStepType type) {
 	BreakReason reason = type == CPUStepType::Into ? BreakReason::DebugStepInto : BreakReason::DebugStep;
 	g_cpuStepQueue.push_back({ type, reason, 0 });
 	Core_WakeIdleCPUThread();
+	return true;
+}
+
+bool Core_RequestFrameAdvance(u32 frames) {
+	if (frames == 0)
+		return false;
+
+	{
+		std::lock_guard<std::mutex> guard(g_stepMutex);
+		if (coreState != CORE_STEPPING_CPU ||
+			g_breakAfterFrames.load(std::memory_order_relaxed) != 0 ||
+			!g_cpuStepCommand.empty() || !g_cpuStepQueue.empty()) {
+			return false;
+		}
+		g_breakAfterFrames.store(frames, std::memory_order_relaxed);
+		g_frameAdvanceReason.store(BreakReason::FrameAdvance, std::memory_order_relaxed);
+	}
+
+	Core_Resume();
 	return true;
 }
 
@@ -561,7 +593,8 @@ static void Core_PerformCPUStep(MIPSDebugInterface *cpu, CPUStepType stepType) {
 	}
 	case CPUStepType::Frame:
 	{
-		g_breakAfterFrame = true;
+		g_breakAfterFrames.store(1, std::memory_order_relaxed);
+		g_frameAdvanceReason.store(BreakReason::AfterFrame, std::memory_order_relaxed);
 		Core_Resume();
 		break;
 	}
@@ -679,8 +712,10 @@ void Core_Break(BreakReason reason, u32 relatedAddress, const BreakpointHit *hit
 		// breakpoint, or lldb discarding the thread plan, on any stop.
 		g_breakpoints.ClearTempBreakPoint();
 
-		// Same reasoning for a cpu.runUntilTime deadline - it belonged to the run that just ended.
+		// Same reasoning for debugger run requests - they belonged to the run that just ended.
 		CoreTiming::SetBreakDeadlineUs(0);
+		g_breakAfterFrames.store(0, std::memory_order_relaxed);
+		g_frameAdvanceReason.store(BreakReason::None, std::memory_order_relaxed);
 
 		g_breakReason = reason;
 		// Cleared rather than left alone when there's no hit, so the detail from an earlier
