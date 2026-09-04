@@ -287,7 +287,7 @@ file - this is just an index.
 | GPU buffers | `gpu.buffer.screenshot`, `gpu.buffer.renderColor/renderDepth/renderStencil`, `gpu.buffer.texture`, `gpu.buffer.clut` | `GPUBufferSubscriber.cpp` |
 | Input injection | `input.buttons.send`, `input.buttons.press`, `input.analog.send` | `InputSubscriber.cpp` |
 | Replay | `replay.begin/abort/flush/execute/status`, `replay.time.get/set` | `ReplaySubscriber.cpp` |
-| In-memory checkpoints | `state.capture/restore/list/drop/clear` - process-local savestate checkpoints for cheap deterministic branching; capture/restore require CPU stepping | `ReplaySubscriber.cpp` |
+| In-memory checkpoints | `state.capture/restore/export/import/list/drop/clear` - process-local savestate checkpoints for cheap deterministic branching, plus explicit blob transfer for seeding another worker; capture/restore/import require CPU stepping | `ReplaySubscriber.cpp` |
 | Client config | `broadcast.config.get/set`, `client.config.get/set` | `ClientConfigSubscriber.cpp` |
 | Log channels | `log.channels.list`, `log.channel.set` - query/change a log channel's level (string: `notice`/`error`/`warning`/`info`/`debug`/`verbose`) and/or enabled state; the `log` event itself (the passive message stream, unaffected by this) keeps its existing numeric `level`, see `LogBroadcaster.cpp` | `LogConfigSubscriber.cpp` |
 
@@ -299,7 +299,10 @@ Two debugger facilities are intended for automated counterfactual experiments:
   small id. `state.restore` restores that id; `state.list`, `state.drop`, and `state.clear`
   manage the process-local store. Capture/restore require the CPU to be stepping, snapshots survive
   WebSocket reconnects but not PPSSPP process exit, and the current boot path must match the path
-  captured with the state. Storage is capped at 32 states / 1 GiB per process.
+  captured with the state. Storage is capped at 32 states / 1 GiB per process. `state.export`
+  and `state.import` are the escape hatch for copying one checkpoint to another PPSSPP worker;
+  keep the large base64 blob inside the orchestration layer rather than passing it through model
+  context.
 - `frame.advance` resumes from stepping for exactly `count` emulated frame boundaries and then
   stops again with a `cpu.stepping` event whose reason is `ui.frameAdvance`. A breakpoint,
   exception, or other stop encountered first cancels the remaining advance. `frame.current`

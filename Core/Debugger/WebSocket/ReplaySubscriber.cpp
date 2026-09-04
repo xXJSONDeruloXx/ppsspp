@@ -44,6 +44,8 @@ DebuggerSubscriber *WebSocketReplayInit(DebuggerEventHandlerMap &map) {
 	map["replay.time.set"] = &WebSocketReplayTimeSet;
 	map["state.capture"] = &WebSocketStateCapture;
 	map["state.restore"] = &WebSocketStateRestore;
+	map["state.export"] = &WebSocketStateExport;
+	map["state.import"] = &WebSocketStateImport;
 	map["state.list"] = &WebSocketStateList;
 	map["state.drop"] = &WebSocketStateDrop;
 	map["state.clear"] = &WebSocketStateClear;
@@ -351,6 +353,118 @@ void WebSocketStateRestore(DebuggerRequest &req) {
 		WriteDebuggerSnapshot(json, id, it->second);
 		json.writeFloat("currentUs", (double)CoreTiming::GetGlobalTimeUs());
 		json.writeInt("currentVcount", __DisplayGetVCount());
+	});
+}
+
+// Export one in-memory checkpoint for transfer to another PPSSPP process (state.export)
+//
+// Parameters:
+//  - id: required snapshot id.
+//
+// Response:
+//  - id, bytes, gamePath, us, vcount: snapshot metadata.
+//  - base64: serialized savestate bytes encoded as base64.
+//
+// This is deliberately separate from state.capture: normal branch experiments should keep
+// snapshots process-local and exchange only their small ids. An orchestrator can use this once to
+// seed another worker, keeping the large blob out of an LLM/MCP-visible result.
+void WebSocketStateExport(DebuggerRequest &req) {
+	std::string id;
+	if (!req.ParamString("id", &id))
+		return;
+
+	DebuggerSnapshot snapshot;
+	bool found = false;
+	Core_RunOnCPUThread([&] {
+		auto it = g_debuggerSnapshots.find(id);
+		if (it == g_debuggerSnapshots.end())
+			return;
+		snapshot = it->second;
+		found = true;
+	});
+	if (!found)
+		return req.Fail("Snapshot id not found");
+
+	JsonWriter &json = req.Respond();
+	WriteDebuggerSnapshot(json, id, snapshot);
+	json.writeString("base64", Base64Encode(snapshot.data.data(), snapshot.data.size()));
+}
+
+// Import an in-memory checkpoint exported by another PPSSPP process (state.import)
+//
+// The current process must already have the same game booted and stopped in CPU stepping mode.
+// The imported blob is not restored automatically; call state.restore afterward.
+//
+// Parameters:
+//  - base64: required serialized savestate bytes from state.export.
+//  - id: optional destination id. If omitted, PPSSPP generates one.
+//  - replace: optional boolean, false by default.
+//  - us: optional source metadata from state.export.
+//  - vcount: optional source metadata from state.export.
+//
+// Response:
+//  - id, bytes, gamePath, us, vcount: metadata for the imported state.
+//  - totalBytes: total memory currently used by debugger snapshots.
+void WebSocketStateImport(DebuggerRequest &req) {
+	std::string encoded;
+	if (!req.ParamString("base64", &encoded))
+		return;
+
+	std::string requestedId;
+	if (!req.ParamString("id", &requestedId, DebuggerParamType::OPTIONAL))
+		return;
+	bool replace = false;
+	if (!req.ParamBool("replace", &replace, DebuggerParamType::OPTIONAL))
+		return;
+
+	double sourceUs = 0.0;
+	const bool hasSourceUs = req.HasParam("us");
+	if (hasSourceUs && !req.ParamF64("us", &sourceUs))
+		return;
+	if (sourceUs < 0.0)
+		return req.Fail("Parameter 'us' must not be negative");
+
+	uint32_t sourceVcount = 0;
+	const bool hasSourceVcount = req.HasParam("vcount");
+	if (hasSourceVcount && !req.ParamU32("vcount", &sourceVcount))
+		return;
+
+	std::vector<u8> data = Base64Decode(encoded.data(), encoded.size());
+	if (data.empty())
+		return req.Fail("Invalid or empty savestate blob");
+	if (data.size() > MAX_DEBUGGER_SNAPSHOT_BYTES)
+		return req.Fail("Savestate blob exceeds debugger snapshot memory limit");
+
+	Core_RunOnCPUThread([&] {
+		if (PSP_GetBootState() != BootState::Complete)
+			return req.Fail("Game not running");
+		if (coreState != CORE_STEPPING_CPU)
+			return req.Fail("CPU must be in CPU stepping mode (cpu.stepping first)");
+
+		std::string id = requestedId.empty() ? NextDebuggerSnapshotId() : requestedId;
+		auto existing = g_debuggerSnapshots.find(id);
+		if (existing != g_debuggerSnapshots.end() && !replace)
+			return req.Fail("Snapshot id already exists (pass replace=true to overwrite it)");
+		if (existing == g_debuggerSnapshots.end() && g_debuggerSnapshots.size() >= MAX_DEBUGGER_SNAPSHOTS)
+			return req.Fail("Debugger snapshot limit reached (drop or clear snapshots first)");
+
+		const uint64_t oldBytes = existing != g_debuggerSnapshots.end() ? existing->second.data.size() : 0;
+		const uint64_t projectedBytes = g_debuggerSnapshotBytes - oldBytes + data.size();
+		if (projectedBytes > MAX_DEBUGGER_SNAPSHOT_BYTES)
+			return req.Fail("Debugger snapshot memory limit reached (drop or clear snapshots first)");
+
+		DebuggerSnapshot snapshot;
+		snapshot.data = std::move(data);
+		snapshot.gamePath = PSP_CoreParameter().fileToStart.ToString();
+		snapshot.emulatedUs = hasSourceUs ? (u64)sourceUs : 0;
+		snapshot.vcount = hasSourceVcount ? (int)sourceVcount : 0;
+
+		g_debuggerSnapshotBytes = projectedBytes;
+		g_debuggerSnapshots[id] = std::move(snapshot);
+
+		JsonWriter &json = req.Respond();
+		WriteDebuggerSnapshot(json, id, g_debuggerSnapshots[id]);
+		json.writeFloat("totalBytes", (double)g_debuggerSnapshotBytes);
 	});
 }
 

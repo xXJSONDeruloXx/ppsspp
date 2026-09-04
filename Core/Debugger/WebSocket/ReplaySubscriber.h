@@ -31,6 +31,8 @@ void WebSocketReplayTimeSet(DebuggerRequest &req);
 
 void WebSocketStateCapture(DebuggerRequest &req);
 void WebSocketStateRestore(DebuggerRequest &req);
+void WebSocketStateExport(DebuggerRequest &req);
+void WebSocketStateImport(DebuggerRequest &req);
 void WebSocketStateList(DebuggerRequest &req);
 void WebSocketStateDrop(DebuggerRequest &req);
 void WebSocketStateClear(DebuggerRequest &req);
