@@ -276,8 +276,8 @@ void WebSocketStateCapture(DebuggerRequest &req) {
 	Core_RunOnCPUThread([&] {
 		if (PSP_GetBootState() != BootState::Complete)
 			return req.Fail("Game not running");
-		if (!Core_IsStepping() || coreState == CORE_POWERDOWN)
-			return req.Fail("CPU currently running (cpu.stepping first)");
+		if (coreState != CORE_STEPPING_CPU)
+			return req.Fail("CPU must be in CPU stepping mode (cpu.stepping first)");
 
 		std::string id = requestedId.empty() ? NextDebuggerSnapshotId() : requestedId;
 		auto existing = g_debuggerSnapshots.find(id);
@@ -328,8 +328,8 @@ void WebSocketStateRestore(DebuggerRequest &req) {
 	Core_RunOnCPUThread([&] {
 		if (PSP_GetBootState() != BootState::Complete)
 			return req.Fail("Game not running");
-		if (!Core_IsStepping() || coreState == CORE_POWERDOWN)
-			return req.Fail("CPU currently running (cpu.stepping first)");
+		if (coreState != CORE_STEPPING_CPU)
+			return req.Fail("CPU must be in CPU stepping mode (cpu.stepping first)");
 
 		auto it = g_debuggerSnapshots.find(id);
 		if (it == g_debuggerSnapshots.end())

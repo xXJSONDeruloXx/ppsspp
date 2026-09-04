@@ -368,8 +368,8 @@ void WebSocketSteppingState::FrameAdvance(DebuggerRequest &req) {
 	Core_RunOnCPUThread([&] {
 		if (!currentDebugMIPS->isAlive())
 			return req.Fail("CPU not started");
-		if (!Core_IsStepping() || coreState == CORE_POWERDOWN)
-			return req.Fail("CPU currently running (cpu.stepping first)");
+		if (coreState != CORE_STEPPING_CPU)
+			return req.Fail("CPU must be in CPU stepping mode (cpu.stepping first)");
 
 		const int startVblank = __DisplayGetNumVblanks();
 		const int startVcount = __DisplayGetVCount();
