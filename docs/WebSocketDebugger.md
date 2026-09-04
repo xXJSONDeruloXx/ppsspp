@@ -303,7 +303,9 @@ Two debugger facilities are intended for automated counterfactual experiments:
   and `state.import` are the escape hatch for copying one checkpoint to another PPSSPP worker;
   import requires the `gamePath` returned by export and rejects it if that path does not match the
   worker's currently booted game. Keep the large base64 blob inside the orchestration layer rather
-  than passing it through model context.
+  than passing it through model context. The WebSocket server caps a complete message at 128 MiB;
+  a future chunked transfer path will be needed if a serialized state approaches that ceiling after
+  base64 expansion.
 - `frame.advance` resumes from stepping for exactly `count` emulated frame boundaries and then
   stops again with a `cpu.stepping` event whose reason is `ui.frameAdvance`. A breakpoint,
   exception, or other stop encountered first cancels the remaining advance. `frame.current`

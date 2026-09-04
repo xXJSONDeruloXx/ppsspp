@@ -397,6 +397,7 @@ void WebSocketStateExport(DebuggerRequest &req) {
 //
 // Parameters:
 //  - base64: required serialized savestate bytes from state.export.
+//  - gamePath: required source game path from state.export; must match the running game.
 //  - id: optional destination id. If omitted, PPSSPP generates one.
 //  - replace: optional boolean, false by default.
 //  - us: optional source metadata from state.export.
